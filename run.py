@@ -26,7 +26,7 @@ for pkg in ("fastapi", "uvicorn", "langchain_openai", "langgraph", "dotenv"):
         _missing.append(pkg)
 
 if _missing:
-    print("⚠️  Missing packages:", ", ".join(_missing))
+    print("[WARN] Missing packages:", ", ".join(_missing))
     print("   Run:  pip install fastapi uvicorn langchain-openai langgraph python-dotenv")
     sys.exit(1)
 
@@ -34,7 +34,7 @@ if _missing:
 import uvicorn
 
 if __name__ == "__main__":
-    print(f"🚀  Starting backend from {BACKEND}")
+    print(f"[START] Starting backend from {BACKEND}")
     uvicorn.run(
         "app.main:app",
         host="127.0.0.1",

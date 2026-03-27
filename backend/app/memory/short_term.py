@@ -1,8 +1,8 @@
 """
-app/memory/short_term.py – In-session (in-memory) conversation store.
+app/memory/short_term.py – In-session helper utilities (legacy / testing only).
 
-Backed by LangGraph's InMemorySaver, which lives in app.agent.graph.
-This module exposes helper functions if you need direct access outside the graph.
+NOTE: The checkpointer in app.agent.graph now uses SqliteSaver (persistent).
+This module is kept for unit-test convenience or local debugging only.
 """
 from langgraph.checkpoint.memory import InMemorySaver
 

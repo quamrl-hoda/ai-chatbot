@@ -1,142 +1,142 @@
-import os
-from typing import Annotated
-from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from langgraph.checkpoint.memory import InMemorySaver
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from typing_extensions import TypedDict
-import sqlite3
+# import os
+# from typing import Annotated
+# from dotenv import load_dotenv
+# from fastapi import FastAPI
+# from fastapi.middleware.cors import CORSMiddleware
+# from pydantic import BaseModel
+# from langgraph.checkpoint.memory import InMemorySaver
+# from langchain_openai import ChatOpenAI
+# from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+# from langgraph.graph import StateGraph, START, END
+# from langgraph.graph.message import add_messages
+# from typing_extensions import TypedDict
+# import sqlite3
 
-# env load
-load_dotenv()
+# # env load
+# load_dotenv()
 
-# # database connection
-# DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database", "chatbot.db")
-# os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)  # create database/ dir if missing
-# conn = sqlite3.connect(database=DB_PATH, check_same_thread=False)
-checkpointer = InMemorySaver()
+# # # database connection
+# # DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database", "chatbot.db")
+# # os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)  # create database/ dir if missing
+# # conn = sqlite3.connect(database=DB_PATH, check_same_thread=False)
+# checkpointer = InMemorySaver()
 
-# ─── State ────────────────────────────────────────────────────────────────────
+# # ─── State ────────────────────────────────────────────────────────────────────
 
-class ChatState(TypedDict):
-    """
-    The graph's shared state.
-    `messages` uses the built-in `add_messages` reducer so nodes append
-    rather than overwrite the conversation history.
-    """
-    messages: Annotated[list[BaseMessage], add_messages]
-    user_input: str
-    response: str
-
-
-# ─── LLM ──────────────────────────────────────────────────────────────────────
-
-llm = ChatOpenAI(model="gpt-4o-mini")
+# class ChatState(TypedDict):
+#     """
+#     The graph's shared state.
+#     `messages` uses the built-in `add_messages` reducer so nodes append
+#     rather than overwrite the conversation history.
+#     """
+#     messages: Annotated[list[BaseMessage], add_messages]
+#     user_input: str
+#     response: str
 
 
-# ─── Nodes ────────────────────────────────────────────────────────────────────
+# # ─── LLM ──────────────────────────────────────────────────────────────────────
 
-def input_node(state: ChatState) -> ChatState:
-    """Receives raw user input and appends it as a HumanMessage."""
-    human_msg = HumanMessage(content=state["user_input"])
-    return {
-        "messages": [human_msg],
-        "user_input": state["user_input"],
-        "response": "",
-    }
+# llm = ChatOpenAI(model="gpt-4o-mini")
 
 
-def llm_node(state: ChatState) -> ChatState:
-    """Calls the LLM with the full conversation history."""
-    ai_msg = llm.invoke(state["messages"])
-    return {
-        "messages": [ai_msg],
-        "response": ai_msg.content,
-    }
+# # ─── Nodes ────────────────────────────────────────────────────────────────────
+
+# def input_node(state: ChatState) -> ChatState:
+#     """Receives raw user input and appends it as a HumanMessage."""
+#     human_msg = HumanMessage(content=state["user_input"])
+#     return {
+#         "messages": [human_msg],
+#         "user_input": state["user_input"],
+#         "response": "",
+#     }
 
 
-def output_node(state: ChatState) -> ChatState:
-    """Formats / post-processes the response. Extend here for tool calls etc."""
-    formatted = state["response"].strip()
-    return {"response": formatted}
+# def llm_node(state: ChatState) -> ChatState:
+#     """Calls the LLM with the full conversation history."""
+#     ai_msg = llm.invoke(state["messages"])
+#     return {
+#         "messages": [ai_msg],
+#         "response": ai_msg.content,
+#     }
 
 
-# ─── Graph ────────────────────────────────────────────────────────────────────
-
-def build_graph() -> StateGraph:
-    builder = StateGraph(ChatState)
-
-    builder.add_node("input_node",  input_node)
-    builder.add_node("llm_node",    llm_node)
-    builder.add_node("output_node", output_node)
-
-    builder.add_edge(START,         "input_node")
-    builder.add_edge("input_node",  "llm_node")
-    builder.add_edge("llm_node",    "output_node")
-    builder.add_edge("output_node", END)
-
-    return builder.compile(checkpointer=checkpointer)
+# def output_node(state: ChatState) -> ChatState:
+#     """Formats / post-processes the response. Extend here for tool calls etc."""
+#     formatted = state["response"].strip()
+#     return {"response": formatted}
 
 
-graph = build_graph()
+# # ─── Graph ────────────────────────────────────────────────────────────────────
+
+# def build_graph() -> StateGraph:
+#     builder = StateGraph(ChatState)
+
+#     builder.add_node("input_node",  input_node)
+#     builder.add_node("llm_node",    llm_node)
+#     builder.add_node("output_node", output_node)
+
+#     builder.add_edge(START,         "input_node")
+#     builder.add_edge("input_node",  "llm_node")
+#     builder.add_edge("llm_node",    "output_node")
+#     builder.add_edge("output_node", END)
+
+#     return builder.compile(checkpointer=checkpointer)
 
 
-# ─── FastAPI ──────────────────────────────────────────────────────────────────
-
-app = FastAPI(title="LangGraph Chatbot API")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],   # restrict in production
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# graph = build_graph()
 
 
-class ChatRequest(BaseModel):
-    user_input: str
-    history: list[dict] = []   # [{"role": "user"|"assistant", "content": "..."}]
+# # ─── FastAPI ──────────────────────────────────────────────────────────────────
+
+# app = FastAPI(title="LangGraph Chatbot API")
+
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],   # restrict in production
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 
-class ChatResponse(BaseModel):
-    response: str
-    nodes_traversed: list[str]
+# class ChatRequest(BaseModel):
+#     user_input: str
+#     history: list[dict] = []   # [{"role": "user"|"assistant", "content": "..."}]
 
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
-    history: list[BaseMessage] = []
-    for m in req.history:
-        if m["role"] == "user":
-            history.append(HumanMessage(content=m["content"]))
-        else:
-            history.append(AIMessage(content=m["content"]))
-
-    initial_state: ChatState = {
-        "messages": history,
-        "user_input": req.user_input,
-        "response": "",
-    }
-
-    result = await graph.ainvoke(initial_state)
-
-    return ChatResponse(
-        response=result["response"],
-        nodes_traversed=["__start__", "input_node", "llm_node", "output_node", "__end__"],
-    )
+# class ChatResponse(BaseModel):
+#     response: str
+#     nodes_traversed: list[str]
 
 
-@app.get("/graph/nodes")
-def get_nodes():
-    """Returns graph node names — useful for the React sidebar."""
-    return {"nodes": list(graph.nodes.keys())}
+# @app.post("/chat", response_model=ChatResponse)
+# async def chat(req: ChatRequest):
+#     history: list[BaseMessage] = []
+#     for m in req.history:
+#         if m["role"] == "user":
+#             history.append(HumanMessage(content=m["content"]))
+#         else:
+#             history.append(AIMessage(content=m["content"]))
+
+#     initial_state: ChatState = {
+#         "messages": history,
+#         "user_input": req.user_input,
+#         "response": "",
+#     }
+
+#     result = await graph.ainvoke(initial_state)
+
+#     return ChatResponse(
+#         response=result["response"],
+#         nodes_traversed=["__start__", "input_node", "llm_node", "output_node", "__end__"],
+#     )
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# @app.get("/graph/nodes")
+# def get_nodes():
+#     """Returns graph node names — useful for the React sidebar."""
+#     return {"nodes": list(graph.nodes.keys())}
+
+
+# @app.get("/health")
+# def health():
+#     return {"status": "ok"}

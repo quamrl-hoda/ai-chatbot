@@ -1,39 +1,33 @@
 """
 app/api/routes/chat.py – Chat inference endpoint.
+
+Long-term memory is handled entirely by AsyncSqliteSaver via the thread_id.
+The client sends ONLY the new user_input + thread_id — the checkpointer
+reloads the full conversation history from SQLite automatically.
 """
-from fastapi import APIRouter
-from langchain_core.messages import HumanMessage, AIMessage
+from fastapi import APIRouter, Request
 
 from app.models.chat import ChatRequest, ChatResponse
-from app.agent.graph import graph
 
 router = APIRouter()
 
 
 @router.post("", response_model=ChatResponse, summary="Send a message")
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     """
-    Accepts a user message plus previous conversation history,
-    runs the LangGraph agent, and returns the assistant reply.
-
-    The `thread_id` field is used by the LangGraph checkpointer to persist
-    memory across turns within the same conversation session.
+    Accepts a user message and a thread_id.
+    LangGraph reloads the full conversation from SQLite (via AsyncSqliteSaver),
+    appends the new turn, calls the LLM, and saves the updated state back.
     """
-    # Rebuild message history from raw dicts
-    history = []
-    for m in req.history:
-        if m["role"] == "user":
-            history.append(HumanMessage(content=m["content"]))
-        else:
-            history.append(AIMessage(content=m["content"]))
+    graph = request.app.state.graph
 
+    # Only the NEW user message is passed — the checkpointer provides the rest.
     initial_state = {
-        "messages": history,
         "user_input": req.user_input,
-        "response": "",
+        "messages":   [],   # empty: will be merged with checkpoint by add_messages
+        "response":   "",
     }
 
-    # ── thread_id is REQUIRED when a checkpointer is attached ────────────────
     config = {"configurable": {"thread_id": req.thread_id}}
 
     result = await graph.ainvoke(initial_state, config=config)

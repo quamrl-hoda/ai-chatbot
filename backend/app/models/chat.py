@@ -1,5 +1,9 @@
 """
 app/models/chat.py – Pydantic request/response schemas for the Chat API.
+
+With AsyncSqliteSaver, the full conversation history is persisted in SQLite
+and reloaded automatically by thread_id.  The client only needs to send
+the new user message and the thread_id — no history payload required.
 """
 from pydantic import BaseModel, Field
 
@@ -8,12 +12,10 @@ class ChatRequest(BaseModel):
     user_input: str = Field(..., description="The user's message")
     thread_id: str = Field(
         default="default",
-        description="Conversation thread ID — must be unique per conversation session",
+        description="Conversation thread ID — unique per conversation session. "
+                    "The backend persists history in SQLite keyed by this ID.",
     )
-    history: list[dict] = Field(
-        default=[],
-        description='Previous turns: [{"role": "user"|"assistant", "content": "..."}]',
-    )
+    # `history` intentionally removed: the checkpointer owns the history now.
 
 
 class ChatResponse(BaseModel):

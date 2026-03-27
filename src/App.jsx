@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const API_URL = "http://localhost:8000";
 
@@ -18,21 +18,20 @@ const ChatIcon = () => (
     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
+const TrashIcon = () => (
+  <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
 const BotIcon = ({ size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 64 64" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-    {/* Antenna */}
     <rect x="30" y="2" width="4" height="10" rx="2"/>
     <circle cx="32" cy="2" r="3"/>
-    {/* Head */}
     <rect x="10" y="12" width="44" height="34" rx="8"/>
-    {/* Eyes */}
     <rect x="18" y="22" width="10" height="10" rx="3" fill="#10a37f"/>
     <rect x="36" y="22" width="10" height="10" rx="3" fill="#10a37f"/>
-    {/* Mouth */}
     <rect x="20" y="36" width="24" height="5" rx="2.5" fill="#10a37f"/>
-    {/* Neck */}
     <rect x="26" y="46" width="12" height="6" rx="2"/>
-    {/* Body shoulders */}
     <rect x="14" y="52" width="36" height="6" rx="4"/>
   </svg>
 );
@@ -80,7 +79,7 @@ function Message({ role, content, isTyping }) {
       )}
       <div style={{
         maxWidth: "72%",
-        padding: isUser ? "10px 16px" : "10px 16px",
+        padding: "10px 16px",
         borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
         background: isUser
           ? "linear-gradient(135deg, #10a37f, #0d8f6e)"
@@ -134,7 +133,7 @@ function WelcomeScreen({ onPrompt }) {
         <h1 style={{ color: "#ececec", fontSize: 26, fontWeight: 600, marginBottom: 6 }}>
           How can I help you today?
         </h1>
-        <p style={{ color: "#888", fontSize: 14 }}>Powered by LangGraph + GPT-4o-mini</p>
+        <p style={{ color: "#888", fontSize: 14 }}>Powered by LangGraph + GPT-4o-mini · Long-term memory enabled</p>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, width: "100%", maxWidth: 560 }}>
         {suggestions.map((s, i) => (
@@ -163,7 +162,9 @@ function WelcomeScreen({ onPrompt }) {
 
 // ── App ────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [conversations, setConversations] = useState([]);   // [{id, title, messages, history}]
+  // conversations: [{id, title, messages: [{role, content}]}]
+  // Messages are the UI-only display list; the backend holds the real history.
+  const [conversations, setConversations] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -174,6 +175,45 @@ export default function App() {
   const textareaRef = useRef(null);
 
   const activeConv = conversations.find(c => c.id === activeId) || null;
+
+  // ── On mount: load persisted thread list from backend ──────────────────────
+  useEffect(() => {
+    async function loadThreads() {
+      try {
+        const res = await fetch(`${API_URL}/history`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.threads?.length) return;
+
+        // Restore each thread's messages from the backend
+        const restored = await Promise.all(
+          data.threads.map(async (tid) => {
+            try {
+              const r = await fetch(`${API_URL}/history/${tid}`);
+              if (!r.ok) return null;
+              const d = await r.json();
+              // Map LangGraph roles (human/ai/tool) → our display roles (user/ai)
+              const messages = (d.messages || []).map(m => ({
+                role: m.role === "human" ? "user" : "ai",
+                content: m.content,
+              })).filter(m => m.content);
+              const firstUser = messages.find(m => m.role === "user");
+              return {
+                id: tid,
+                title: firstUser ? makeTitle(firstUser.content) : tid,
+                messages,
+              };
+            } catch { return null; }
+          })
+        );
+        const valid = restored.filter(Boolean);
+        if (valid.length) setConversations(valid);
+      } catch {
+        // Backend not reachable yet — start fresh
+      }
+    }
+    loadThreads();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -193,12 +233,13 @@ export default function App() {
     inputRef.current?.focus();
   }
 
-  function switchConv(id) {
-    setActiveId(id);
-  }
+  function switchConv(id) { setActiveId(id); }
 
-  function updateConv(id, updater) {
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, ...updater(c) } : c));
+  async function deleteConv(e, id) {
+    e.stopPropagation();
+    try { await fetch(`${API_URL}/history/${id}`, { method: "DELETE" }); } catch {}
+    setConversations(prev => prev.filter(c => c.id !== id));
+    if (activeId === id) setActiveId(null);
   }
 
   async function sendMessage(overrideText) {
@@ -206,48 +247,54 @@ export default function App() {
     if (!text || loading) return;
     setInput("");
 
+    // ── Determine or create conversation ─────────────────────────────────────
     let convId = activeId;
+    let isNew = false;
 
-    // Create new conversation if none active
     if (!convId) {
       convId = makeId();
-      const newConv = {
+      isNew = true;
+      setConversations(prev => [{
         id: convId,
         title: makeTitle(text),
         messages: [],
-        history: [],
-      };
-      setConversations(prev => [newConv, ...prev]);
+      }, ...prev]);
       setActiveId(convId);
     }
 
-    // Add user message
+    // ── Optimistically show user message ─────────────────────────────────────
     const userMsg = { role: "user", content: text };
-    updateConv(convId, c => ({ messages: [...c.messages, userMsg] }));
+    setConversations(prev => prev.map(c =>
+      c.id === convId ? { ...c, messages: [...c.messages, userMsg] } : c
+    ));
 
     setLoading(true);
-    setStatusText("▶ llm_node — Calling GPT-4o-mini…");
+    setStatusText("▶ Calling GPT-4o-mini…");
 
     let reply = "Sorry, something went wrong.";
     try {
-      const currentConv = conversations.find(c => c.id === convId);
-      const history = currentConv?.history ?? [];
+      // Send ONLY user_input + thread_id — backend owns the full history
       const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_input: text, thread_id: convId, history }),
+        body: JSON.stringify({ user_input: text, thread_id: convId }),
       });
-      const data = await res.json();
-      reply = data.response;
-    } catch (e) {
-      reply = `⚠️ Cannot reach backend at ${API_URL}.\nMake sure FastAPI is running:\n  python -m uvicorn backend.main:app --reload --port 8000`;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        reply = `⚠️ Backend error ${res.status}: ${err.detail ?? res.statusText}`;
+      } else {
+        const data = await res.json();
+        reply = data.response;
+      }
+    } catch {
+      reply = `⚠️ Cannot reach backend at ${API_URL}.\nMake sure FastAPI is running:\n  uv run run.py`;
     }
 
+    // ── Append AI reply ───────────────────────────────────────────────────────
     const aiMsg = { role: "ai", content: reply };
-    updateConv(convId, c => ({
-      messages: [...c.messages, userMsg, aiMsg],
-      history: [...c.history, { role: "user", content: text }, { role: "assistant", content: reply }],
-    }));
+    setConversations(prev => prev.map(c =>
+      c.id === convId ? { ...c, messages: [...c.messages, aiMsg] } : c
+    ));
 
     setStatusText("");
     setLoading(false);
@@ -261,15 +308,6 @@ export default function App() {
     }
   }
 
-  // Get fresh messages (after state updates)
-  const displayMessages = activeConv
-    ? activeConv.messages.filter(m =>
-        !activeConv.messages.slice(activeConv.messages.lastIndexOf(m) + 1).some(x => x.role === m.role)
-        || true
-      )
-    : [];
-
-  // Actually get messages from activeConv fresh each render
   const msgs = activeConv?.messages ?? [];
 
   return (
@@ -298,6 +336,9 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 99px; }
         button { cursor: pointer; border: none; outline: none; }
         input, textarea { outline: none; }
+        .conv-item { position: relative; }
+        .conv-item .del-btn { opacity: 0; transition: opacity 0.15s; }
+        .conv-item:hover .del-btn { opacity: 1; }
       `}</style>
 
       {/* ── Sidebar ── */}
@@ -342,32 +383,55 @@ export default function App() {
               <p style={{ color: "#555", fontSize: 12, padding: "12px 8px" }}>No conversations yet</p>
             )}
             {conversations.map(conv => (
-              <button
+              <div
                 key={conv.id}
-                onClick={() => switchConv(conv.id)}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "9px 10px",
-                  borderRadius: 8,
-                  background: activeId === conv.id ? "#2a2a2a" : "transparent",
-                  color: activeId === conv.id ? "#ececec" : "#aaa",
-                  fontSize: 13,
-                  textAlign: "left",
-                  overflow: "hidden",
-                  whiteSpace: "nowrap",
-                  textOverflow: "ellipsis",
-                  transition: "all 0.15s",
-                  marginBottom: 2,
-                }}
-                onMouseEnter={e => { if (activeId !== conv.id) e.currentTarget.style.background = "#222"; }}
-                onMouseLeave={e => { if (activeId !== conv.id) e.currentTarget.style.background = "transparent"; }}
+                className="conv-item"
+                style={{ marginBottom: 2 }}
               >
-                <span style={{ flexShrink: 0, opacity: 0.6 }}><ChatIcon /></span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{conv.title}</span>
-              </button>
+                <button
+                  onClick={() => switchConv(conv.id)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "9px 32px 9px 10px",
+                    borderRadius: 8,
+                    background: activeId === conv.id ? "#2a2a2a" : "transparent",
+                    color: activeId === conv.id ? "#ececec" : "#aaa",
+                    fontSize: 13,
+                    textAlign: "left",
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                    textOverflow: "ellipsis",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={e => { if (activeId !== conv.id) e.currentTarget.style.background = "#222"; }}
+                  onMouseLeave={e => { if (activeId !== conv.id) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{ flexShrink: 0, opacity: 0.6 }}><ChatIcon /></span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{conv.title}</span>
+                </button>
+                {/* Delete button */}
+                <button
+                  className="del-btn"
+                  onClick={(e) => deleteConv(e, conv.id)}
+                  title="Delete conversation"
+                  style={{
+                    position: "absolute", right: 8, top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "transparent",
+                    color: "#666",
+                    padding: 4,
+                    borderRadius: 4,
+                    display: "flex", alignItems: "center",
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.color = "#ff6b6b"}
+                  onMouseLeave={e => e.currentTarget.style.color = "#666"}
+                >
+                  <TrashIcon />
+                </button>
+              </div>
             ))}
           </div>
 
@@ -383,7 +447,10 @@ export default function App() {
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 11, fontWeight: 700, color: "#fff",
             }}>U</div>
-            <span style={{ fontSize: 13, color: "#aaa" }}>User</span>
+            <div>
+              <div style={{ fontSize: 13, color: "#ccc" }}>User</div>
+              <div style={{ fontSize: 10, color: "#555" }}>Long-term memory ✓</div>
+            </div>
           </div>
         </aside>
       )}
@@ -429,7 +496,7 @@ export default function App() {
             borderRadius: 6,
             padding: "3px 8px",
             fontFamily: "monospace",
-          }}>gpt-4o-mini</span>
+          }}>gpt-4o-mini · SQLite memory</span>
         </div>
 
         {/* Messages */}
