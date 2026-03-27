@@ -1,0 +1,13 @@
+langchain
+langgraph
+dds
+langchain-community
+# langchain openai
+langchain-openai
+
+# Essential dependencies
+pydantic
+typing_extensions
+requests
+python-dotenv
+fastapi
