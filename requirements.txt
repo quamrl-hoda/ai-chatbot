@@ -4,7 +4,8 @@ dds
 langchain-community
 # langchain openai
 langchain-openai
-
+langgraph-checkpoint
+langgraph-checkpoint-sqlite
 # Essential dependencies
 pydantic
 typing_extensions

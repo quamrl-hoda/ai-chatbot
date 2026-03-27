@@ -1,30 +1,25 @@
-"""
-LangGraph Simple Chatbot — Backend
-------------------------------------
-Graph: __start__ → input_node → llm_node → output_node → __end__
-
-Install:
-    pip install langgraph langchain-anthropic fastapi uvicorn python-dotenv
-
-Run (from project root):
-    uvicorn backend.main:app --reload --port 8000
-"""
-
 import os
 from typing import Annotated
 from dotenv import load_dotenv
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from langgraph.checkpoint.memory import InMemorySaver
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
+import sqlite3
 
+# env load
 load_dotenv()
+
+# # database connection
+# DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database", "chatbot.db")
+# os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)  # create database/ dir if missing
+# conn = sqlite3.connect(database=DB_PATH, check_same_thread=False)
+checkpointer = InMemorySaver()
 
 # ─── State ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +80,7 @@ def build_graph() -> StateGraph:
     builder.add_edge("llm_node",    "output_node")
     builder.add_edge("output_node", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 graph = build_graph()

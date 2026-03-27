@@ -235,7 +235,7 @@ export default function App() {
       const res = await fetch(`${API_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_input: text, history }),
+        body: JSON.stringify({ user_input: text, thread_id: convId, history }),
       });
       const data = await res.json();
       reply = data.response;
